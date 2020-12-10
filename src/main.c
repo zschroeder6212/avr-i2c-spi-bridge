@@ -1,5 +1,8 @@
-#define F_CPU 8000000
+#define F_CPU 16000000
 #include "I2C/I2CSlave.h"
+#include <avr/io.h>
+#include <avr/delay.h>
+
 
 #define I2C_ADDR 0x28
 
@@ -19,37 +22,37 @@
 
 volatile uint8_t buffer[BUFFER_SIZE];
 
-uint8_t received_index = 0;
-uint8_t received_size = 0;
+volatile uint8_t received_index = 0;
+volatile uint8_t received_size = 0;
 
-uint8_t transmit_index = 0;
+volatile uint8_t transmit_index = 0;
 
-uint8_t mode = MODE_COMMAND;
+volatile uint8_t mode = MODE_COMMAND;
 
-uint8_t CS = 0;
+volatile uint8_t CS = 0;
 
 void SPI_init()
 {
-    // set CS, MOSI and SCK to output
+    /* set CS, MOSI and SCK to output */
     SPI_DDR |= (1 << PB2) | (1 << MOSI) | (1 << SCK);
     CS_DDR |= 0x0f;
 
-    // set all CS pins high
+    /* set all CS pins high */
     CS_PORT |= 0x0f;
 
-    // enable SPI, set as master, and clock to fosc/16
+    /* enable SPI, set as master, and clock to fosc/16 */
     SPCR = (1<<SPE)|(1<<MSTR)|(1<<SPR0);
 }
 
 uint8_t SPI_rw(uint8_t data)
 {
-    // transmit data
+    /* transmit data */
     SPDR = data;
 
-    // Wait for reception complete
+    /* Wait for reception complete */
     while(!(SPSR & (1 << SPIF)));
 
-    // return Data Register
+    /* return Data Register */
     return SPDR;
 }
 
@@ -69,16 +72,30 @@ void I2C_received(uint8_t received_data, uint8_t stop)
       }
       break;
     case MODE_TRANSMIT:
+    {
       if(!stop && received_index < BUFFER_SIZE)
-      {
+      { 
+        buffer[received_index++] = SPI_rw(received_data);
+      }else if(!stop && received_index >= BUFFER_SIZE){
+        received_index = 0;
         buffer[received_index++] = SPI_rw(received_data);
       }else if(stop){
         CS_PORT |= 0x0f;
+        received_index = 0;
       }
       break;
+    }
     case MODE_CONFIGURE:
-      //TODO
+    {
+      if(!stop)
+      {
+        uint8_t order = (received_data>>5)&0x01;
+        uint8_t cpol = (received_data>>3)&0x01;
+        uint8_t cpha = (received_data>>2)&0x01;
+        SPCR = (order<<DORD)|(cpol<<CPOL)|(cpha<<CPHA);
+      }
       break;
+    }
   }
 
   if(stop)
@@ -89,32 +106,33 @@ void I2C_received(uint8_t received_data, uint8_t stop)
 
 void I2C_requested()
 {
-  if(transmit_index >= received_index)
+  if(transmit_index >= BUFFER_SIZE)
   {
-    I2C_transmitByte(0);
-    received_index = 0;
     transmit_index = 0;
+    I2C_transmitByte(buffer[transmit_index++]);
   }else {
-    I2C_transmitByte(buffer[transmit_index]);
-    transmit_index++;
+    I2C_transmitByte(buffer[transmit_index++]);
   }
 }
 
 void setup()
 {
-  // init SPI as master
+  /* init SPI as master */
   SPI_init();
 
-  // set received/requested callbacks
+  /* set received/requested callbacks */
   I2C_setCallbacks(I2C_received, I2C_requested);
 
-  // init I2C
+  /* init I2C */
   I2C_init(I2C_ADDR);
 }
 
 int main()
 {
   setup();
-
+  for(int i = 0; i < BUFFER_SIZE; i++)
+  {
+    buffer[i] = 0;
+  }
   while(1);
 }

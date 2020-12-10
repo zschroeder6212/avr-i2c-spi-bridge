@@ -1,4 +1,4 @@
-MCU = atmega8
+MCU = atmega328p
 programmer = usbtiny
 
 all: main.c
